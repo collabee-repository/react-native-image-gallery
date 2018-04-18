@@ -1,225 +1,286 @@
 import React, { PureComponent } from 'react';
-import { View, Text, Image, ViewPropTypes } from 'react-native';
+import { ActivityIndicator, View, Text, Image, ViewPropTypes, StyleSheet } from 'react-native';
 import PropTypes from 'prop-types';
 import ViewTransformer from '../ViewTransformer';
 
 export default class TransformableImage extends PureComponent {
-    static propTypes = {
-        image: PropTypes.shape({
-            source: PropTypes.oneOfType([
-                PropTypes.object,
-                PropTypes.number
-            ]).isRequired,
-            dimensions: PropTypes.shape({ width: PropTypes.number, height: PropTypes.number })
-        }).isRequired,
-        style: ViewPropTypes ? ViewPropTypes.style : View.propTypes.style,
-        onLoad: PropTypes.func,
-        onLoadStart: PropTypes.func,
-        enableTransform: PropTypes.bool,
-        enableScale: PropTypes.bool,
-        enableTranslate: PropTypes.bool,
-        onTransformGestureReleased: PropTypes.func,
-        onViewTransformed: PropTypes.func,
-        imageComponent: PropTypes.func,
-        resizeMode: PropTypes.string,
-        errorComponent: PropTypes.func
+  static propTypes = {
+    image: PropTypes.shape({
+      source: PropTypes.oneOfType([PropTypes.object, PropTypes.number]).isRequired,
+      dimensions: PropTypes.shape({ width: PropTypes.number, height: PropTypes.number }),
+    }).isRequired,
+    style: ViewPropTypes ? ViewPropTypes.style : View.propTypes.style,
+    onLoad: PropTypes.func,
+    onLoadStart: PropTypes.func,
+    enableTransform: PropTypes.bool,
+    enableScale: PropTypes.bool,
+    enableTranslate: PropTypes.bool,
+    onTransformGestureReleased: PropTypes.func,
+    onViewTransformed: PropTypes.func,
+    imageComponent: PropTypes.func,
+    loadingComponent: PropTypes.func,
+    resizeMode: PropTypes.string,
+    errorComponent: PropTypes.func,
+  };
+
+  static defaultProps = {
+    enableTransform: true,
+    enableScale: true,
+    enableTranslate: true,
+    imageComponent: undefined,
+    loadingComponent: undefined,
+    resizeMode: 'contain',
+  };
+
+  static cachedDimensions = {};
+
+  constructor(props) {
+    super(props);
+
+    this.onLayout = this.onLayout.bind(this);
+    this.onLoad = this.onLoad.bind(this);
+    this.onLoadStart = this.onLoadStart.bind(this);
+    this.onError = this.onError.bind(this);
+    this.getViewTransformerInstance = this.getViewTransformerInstance.bind(this);
+    this.renderError = this.renderError.bind(this);
+
+    this.state = {
+      viewWidth: 0,
+      viewHeight: 0,
+      imageLoaded: false,
+      imageDimensions: props.image.dimensions,
+      keyAcumulator: 1,
+    };
+  }
+
+  componentWillMount() {
+    if (!this.state.imageDimensions) {
+      this.getImageSize(this.props.image);
+    }
+  }
+
+  componentDidMount() {
+    this._mounted = true;
+  }
+
+  componentWillReceiveProps(nextProps) {
+    if (!sameImage(this.props.image, nextProps.image)) {
+      // image source changed, clear last image's imageDimensions info if any
+      this.setState({
+        imageDimensions: nextProps.image.dimensions,
+        keyAcumulator: this.state.keyAcumulator + 1,
+      });
+      if (!nextProps.image.dimensions) {
+        // if we don't have image dimensions provided in source
+        this.getImageSize(nextProps.image);
+      }
+    }
+  }
+
+  componentWillUnmount() {
+    this._mounted = false;
+  }
+
+  onLoadStart(e) {
+    this.props.onLoadStart && this.props.onLoadStart(e);
+    if (this.state.imageLoaded) {
+      this.setState({ imageLoaded: false });
+    }
+  }
+
+  onLoad(e) {
+    this.props.onLoad && this.props.onLoad(e);
+    if (!this.state.imageLoaded) {
+      this.setState({ imageLoaded: true });
+    }
+  }
+
+  onError(e) {
+    this.props.onError && this.onprops.onError(e);
+    console.log(e);
+  }
+
+  onLayout(e) {
+    let { width, height } = e.nativeEvent.layout;
+    if (this.state.viewWidth !== width || this.state.viewHeight !== height) {
+      this.setState({ viewWidth: width, viewHeight: height });
+    }
+  }
+
+  getImageSize(image) {
+    if (!image) {
+      return;
+    }
+    const { source, dimensions } = image;
+
+    if (dimensions) {
+      this.setState({ imageDimensions: dimensions });
+      return;
+    }
+
+    if (TransformableImage.cachedDimensions[source.uri]) {
+      this.setState({ imageDimensions: TransformableImage.cachedDimensions[source.uri] });
+      return;
+    }
+
+    if (!source || !source.uri) {
+      console.warn('react-native-image-gallery', 'Please provide dimensions of your local images');
+      return;
+    }
+
+    const onImageSize = (width, height) => {
+      if (width && height) {
+        TransformableImage.cachedDimensions[source.uri] = { width, height };
+        this._mounted &&
+          this.setState({ imageDimensions: TransformableImage.cachedDimensions[source.uri] });
+      }
     };
 
-    static defaultProps = {
-        enableTransform: true,
-        enableScale: true,
-        enableTranslate: true,
-        imageComponent: undefined,
-        resizeMode: 'contain'
+    Image.getSize(source.uri, onImageSize, e => {
+      console.warn('Failed to get size: ', e);
+      this._mounted &&
+        this.setState({
+          error: true,
+          errorInfo: e,
+        });
+    });
+  }
+
+  getViewTransformerInstance() {
+    return this.refs['viewTransformer'];
+  }
+
+  renderError() {
+    return (
+      (this.props.errorComponent && this.props.errorComponent()) || (
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'black',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Text style={{ color: 'white', fontSize: 15, fontStyle: 'italic' }}>
+            This image cannot be displayed...
+          </Text>
+        </View>
+      )
+    );
+  }
+
+  render() {
+    const {
+      imageDimensions,
+      viewWidth,
+      viewHeight,
+      error,
+      errorInfo,
+      keyAccumulator,
+      imageLoaded,
+    } = this.state;
+    const {
+      style,
+      image,
+      imageComponent,
+      resizeMode,
+      enableTransform,
+      enableScale,
+      enableTranslate,
+      onTransformGestureReleased,
+      onViewTransformed,
+      loadingComponent,
+    } = this.props;
+
+    let maxScale = 1;
+    let contentAspectRatio;
+    let width, height; // imageDimensions
+
+    if (imageDimensions) {
+      width = imageDimensions.width;
+      height = imageDimensions.height;
+    }
+
+    if (width && height) {
+      contentAspectRatio = width / height;
+      if (viewWidth && viewHeight) {
+        maxScale = Math.max(width / viewWidth, height / viewHeight);
+        maxScale = Math.max(1, maxScale);
+      }
+    }
+
+    const imageProps = {
+      ...this.props,
+      imageLoaded,
+      source: image.source,
+      style: [style, { backgroundColor: 'transparent' }],
+      resizeMode: resizeMode,
+      onLoadStart: this.onLoadStart,
+      onLoad: this.onLoad,
+      onError: this.onError,
+      capInsets: { left: 0.1, top: 0.1, right: 0.1, bottom: 0.1 },
     };
 
-    static cachedDimensions = {};
-
-    constructor (props) {
-        super(props);
-
-        this.onLayout = this.onLayout.bind(this);
-        this.onLoad = this.onLoad.bind(this);
-        this.onLoadStart = this.onLoadStart.bind(this);
-        this.getViewTransformerInstance = this.getViewTransformerInstance.bind(this);
-        this.renderError = this.renderError.bind(this);
-
-        this.state = {
-            viewWidth: 0,
-            viewHeight: 0,
-            imageLoaded: false,
-            imageDimensions: props.image.dimensions,
-            keyAcumulator: 1
-        };
+    let content;
+    if (error) {
+      content = this.renderError(errorInfo);
+    } else if (imageComponent) {
+      content = imageComponent(imageProps, imageDimensions);
+    } else {
+      content = <Image {...imageProps} />;
     }
 
-    componentWillMount () {
-        if (!this.state.imageDimensions) {
-            this.getImageSize(this.props.image);
-        }
-    }
-
-    componentDidMount () {
-        this._mounted = true;
-    }
-
-    componentWillReceiveProps (nextProps) {
-        if (!sameImage(this.props.image, nextProps.image)) {
-            // image source changed, clear last image's imageDimensions info if any
-            this.setState({ imageDimensions: nextProps.image.dimensions, keyAcumulator: this.state.keyAcumulator + 1 });
-            if (!nextProps.image.dimensions) { // if we don't have image dimensions provided in source
-                this.getImageSize(nextProps.image);
-            }
-        }
-    }
-
-    componentWillUnmount () {
-        this._mounted = false;
-    }
-
-    onLoadStart (e) {
-        this.props.onLoadStart && this.props.onLoadStart(e);
-        if (this.state.imageLoaded) {
-            this.setState({ imageLoaded: false });
-        }
-    }
-
-    onLoad (e) {
-        this.props.onLoad && this.props.onLoad(e);
-        if (!this.state.imageLoaded) {
-            this.setState({ imageLoaded: true });
-        }
-    }
-
-    onLayout (e) {
-        let {width, height} = e.nativeEvent.layout;
-        if (this.state.viewWidth !== width || this.state.viewHeight !== height) {
-            this.setState({ viewWidth: width, viewHeight: height });
-        }
-    }
-
-    getImageSize (image) {
-        if (!image) {
-            return;
-        }
-        const { source, dimensions } = image;
-
-        if (dimensions) {
-            this.setState({ imageDimensions: dimensions });
-            return;
-        }
-
-        if (TransformableImage.cachedDimensions[source.uri]) {
-            this.setState({ imageDimensions: TransformableImage.cachedDimensions[source.uri] });
-            return;
-        }
-
-        if (!source || !source.uri) {
-            console.warn('react-native-image-gallery', 'Please provide dimensions of your local images');
-            return;
-        }
-
-        const onImageSize = (width, height) => {
-            if (width && height) {
-                TransformableImage.cachedDimensions[source.uri] = { width, height };
-                this._mounted && this.setState({ imageDimensions: TransformableImage.cachedDimensions[source.uri] });
-            }
-        };
-
-        Image.getSize(
-            source.uri,
-            onImageSize,
-            (e) => {
-                console.log(e);
-                this._mounted && this.setState({
-                    error: true,
-                    errorInfo: e
-                });
-            }
+    let loading;
+    if (!error && !imageLoaded) {
+      if (loadingComponent) {
+        loading = loadingComponent();
+      } else {
+        loading = (
+          <View
+            style={{
+              ...StyleSheet.absoluteFillObject,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <ActivityIndicator size="large" color="white" />
+          </View>
         );
+      }
     }
 
-    getViewTransformerInstance () {
-        return this.refs['viewTransformer'];
-    }
-
-    renderError () {
-        return (this.props.errorComponent && this.props.errorComponent()) || (
-            <View style={{ flex: 1, backgroundColor: 'black', alignItems: 'center', justifyContent: 'center' }}>
-                 <Text style={{ color: 'white', fontSize: 15, fontStyle: 'italic' }}>This image cannot be displayed...</Text>
-            </View>
-        );
-    }
-
-    render () {
-        const { imageDimensions, viewWidth, viewHeight, error, errorInfo, keyAccumulator, imageLoaded } = this.state;
-        const { style, image, imageComponent, resizeMode, enableTransform, enableScale, enableTranslate, onTransformGestureReleased, onViewTransformed } = this.props;
-
-        let maxScale = 1;
-        let contentAspectRatio;
-        let width, height; // imageDimensions
-
-        if (imageDimensions) {
-            width = imageDimensions.width;
-            height = imageDimensions.height;
-        }
-
-        if (width && height) {
-            contentAspectRatio = width / height;
-            if (viewWidth && viewHeight) {
-                maxScale = Math.max(width / viewWidth, height / viewHeight);
-                maxScale = Math.max(1, maxScale);
-            }
-        }
-
-        const imageProps = {
-            ...this.props,
-            imageLoaded,
-            source: image.source,
-            style: [style, { backgroundColor: 'transparent' }],
-            resizeMode: resizeMode,
-            onLoadStart: this.onLoadStart,
-            onLoad: this.onLoad,
-            capInsets: { left: 0.1, top: 0.1, right: 0.1, bottom: 0.1 }
-        };
-
-        let content;
-        if (error) {
-            content = this.renderError(errorInfo);
-        } else if (imageComponent) {
-            content = imageComponent(imageProps, imageDimensions);
-        } else {
-            content = <Image { ...imageProps } />;
-        }
-
-        return (
-            <ViewTransformer
-              ref={'viewTransformer'}
-              key={'viewTransformer#' + keyAccumulator} // when image source changes, we should use a different node to avoid reusing previous transform state
-              enableTransform={enableTransform && imageLoaded} // disable transform until image is loaded
-              enableScale={enableScale}
-              enableTranslate={enableTranslate}
-              enableResistance={true}
-              onTransformGestureReleased={onTransformGestureReleased}
-              onViewTransformed={onViewTransformed}
-              maxScale={maxScale}
-              contentAspectRatio={contentAspectRatio}
-              onLayout={this.onLayout}
-              style={style}>
-                { content }
-            </ViewTransformer>
-        );
-    }
+    return (
+      <View>
+        <ViewTransformer
+          ref={'viewTransformer'}
+          key={'viewTransformer#' + keyAccumulator} // when image source changes, we should use a different node to avoid reusing previous transform state
+          enableTransform={enableTransform && imageLoaded} // disable transform until image is loaded
+          enableScale={enableScale}
+          enableTranslate={enableTranslate}
+          enableResistance={true}
+          onTransformGestureReleased={onTransformGestureReleased}
+          onViewTransformed={onViewTransformed}
+          maxScale={maxScale}
+          contentAspectRatio={contentAspectRatio}
+          onLayout={this.onLayout}
+          style={style}
+        >
+          {content}
+        </ViewTransformer>
+        {loading}
+      </View>
+    );
+  }
 }
 
-function sameImage (source, nextSource) {
-    if (source === nextSource) {
-        return true;
+function sameImage(source, nextSource) {
+  if (source === nextSource) {
+    return true;
+  }
+  if (source && nextSource) {
+    if (source.uri && nextSource.uri) {
+      return source.uri === nextSource.uri;
     }
-    if (source && nextSource) {
-        if (source.uri && nextSource.uri) {
-            return source.uri === nextSource.uri;
-        }
-    }
-    return false;
+  }
+  return false;
 }
