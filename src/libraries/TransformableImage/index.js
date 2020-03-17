@@ -136,7 +136,7 @@ export default class TransformableImage extends PureComponent {
       }
     };
 
-    Image.getSize(source.uri, onImageSize, e => {
+    Image.getSizeWithHeaders(source.uri, source.headers, onImageSize, e => {
       console.warn('Failed to get size: ', e);
       this._mounted &&
         this.setState({
